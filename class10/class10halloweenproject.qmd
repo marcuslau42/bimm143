@@ -1,7 +1,7 @@
 ---
 title: "Halloween Mini-Project"
 author: "Marcus Lau"
-format: pdf
+format: gfm
 ---
 
 
