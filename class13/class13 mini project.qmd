@@ -1,0 +1,278 @@
+---
+title: "Class 13: RNASeq Mini Project"
+author: "Marcus Lau"
+format: gfm
+---
+
+The data for for hands-on session comes from GEO entry: GSE37704, which is associated with the following publication:
+Trapnell C, Hendrickson DG, Sauvageau M, Goff L et al. "Differential analysis of gene regulation at transcript resolution with RNA-seq". Nat Biotechnol 2013 Jan;31(1):46-53. PMID: 23222703
+
+The authors report on differential analysis of lung fibroblasts in response to loss of the developmental transcription factor HOXA1. 
+
+
+
+##RNASeq Analysis
+
+Need 2 things: countData and colData
+
+```{r}
+colData <- read.csv("GSE37704_metadata.csv", row.names=1)
+head(colData)
+```
+
+```{r}
+countData <- read.csv("GSE37704_featurecounts.csv", row.names=1)
+head(countData)
+```
+
+There is an unwanted first column "length" in the countData. I will need to remove this first before going on to further analysis:
+
+```{r}
+counts <- countData[,-1]
+head(counts)
+```
+
+##Removing Zero count genes
+
+>Q. Complete the code below to filter countData to exclude genes (i.e. rows) where we have 0 read count across all samples (i.e. columns).
+
+>Tip: What will rowSums() of countData return and how could you use it in this context?
+
+
+```{r}
+head(counts)
+```
+
+```{r}
+to.keep <- rowSums(counts) >0
+counts <- counts[to.keep,]
+head(counts)
+```
+How many genes do we have left?
+```{r}
+nrow(counts)
+```
+
+
+
+```{r}
+colnames(counts)==rownames(colData)
+```
+
+
+Time to use DESeq
+```{r}
+library(DESeq2)
+```
+
+1st step required by DESeq
+```{r}
+dds = DESeqDataSetFromMatrix(countData=counts,
+                             colData=colData,
+                             design=~condition)
+```
+
+
+
+```{r}
+dds <- DESeq(dds)
+res <- results(dds)
+```
+
+>Call the summary() function on your results to get a sense of how many genes are up or down-regulated at the default 0.1 p-value cutoff.
+
+```{r}
+summary(res)
+```
+
+##Volcano Plot
+```{r}
+plot( res$log2FoldChange, -log(res$padj) )
+
+```
+Adding Color
+```{r}
+# Make a color vector for all genes
+mycols <- rep("gray", nrow(res) )
+
+# Color red the genes with absolute fold change above 2
+mycols[ abs(res$log2FoldChange) > 2 ] <- "red"
+
+# Color blue those with adjusted p-value less than 0.01
+#  and absolute fold change more than 2
+inds <- (res$padj<0.01) & (abs(res$log2FoldChange) > 2 )
+mycols[ inds ] <- "blue"
+
+plot( res$log2FoldChange, -log(res$padj), col=mycols, xlab="Log2(FoldChange)", ylab="-Log(P-value)" )
+abline(v=c(-2,+2))
+abline(h=-log(0.05))
+
+```
+
+# Adding Gene Annotation
+
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+columns(org.Hs.eg.db)
+
+res$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res), # Our genenames
+                     keytype="ENSEMBL",        # The format of our genenames
+                     column="SYMBOL",          # The new format we want to add
+                     multiVals="first")
+
+res$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+res$genename <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="GENENAME",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+head(res, 10)
+```
+
+
+Save my results so far to a CSV file
+>Q. Finally for this section let's reorder these results by adjusted p-value and save them to a CSV file in your current project directory.
+
+```{r}
+res = res[order(res$pvalue),]
+write.csv(res, file ="deseq_results.csv")
+```
+
+
+
+##Pathway Analysis
+
+Again we will use the 'gage()' package and functino with a focus first on KEGG and sigment
+
+```{r}
+library(gage)
+library(gageData)
+
+data(kegg.sets.hs)
+data(sigmet.idx.hs)
+
+# Focus on signaling and metabolic pathways only
+kegg.sets.hs = kegg.sets.hs[sigmet.idx.hs]
+
+# Examine the first 3 pathways
+head(kegg.sets.hs, 3)
+```
+
+
+Recall that 'gage()' wants only the vector 
+```{r}
+foldchanges = res$log2FoldChange
+names(foldchanges) = res$entrez
+head(foldchanges)
+```
+
+
+```{r}
+# Get the results
+keggres = gage(foldchanges, gsets=kegg.sets.hs)
+```
+
+
+```{r}
+attributes(keggres)
+```
+
+```{r}
+head(keggres$less)
+```
+
+
+
+Generating a colored pathway figure for hsa04110 cell cycle
+```{r}
+library(pathview)
+pathview(gene.data=foldchanges, pathway.id="hsa04110")
+
+```
+
+![](hsa04110.pathview.png)
+
+
+```{r}
+## Focus on top 5 upregulated pathways here for demo purposes only
+keggrespathways <- rownames(keggres$greater)[1:5]
+
+# Extract the 8 character long IDs part of each string
+keggresids = substr(keggrespathways, start=1, stop=8)
+keggresids
+```
+
+```{r}
+pathview(gene.data=foldchanges, pathway.id=keggresids, species="hsa")
+
+```
+
+
+![](hsa04740.pathview.png)
+
+
+![](hsa04640.pathview.png)
+
+
+
+![](hsa00140.pathview.png)
+
+
+![](hsa04630.pathview.png)
+
+
+
+![](hsa04976.pathview.png)
+
+
+
+
+
+
+
+
+##Gene Ontology
+```{r}
+data(go.sets.hs)
+data(go.subs.hs)
+
+# Focus on Biological Process subset of GO
+gobpsets = go.sets.hs[go.subs.hs$BP]
+
+gobpres = gage(foldchanges, gsets=gobpsets, same.dir=TRUE)
+
+lapply(gobpres, head)
+```
+
+
+
+##Reactome Analysis
+
+```{r}
+sig_genes <- res[res$padj <= 0.05 & !is.na(res$padj), "symbol"]
+print(paste("Total number of significant genes:", length(sig_genes)))
+```
+
+
+
+```{r}
+write.table(sig_genes, file="significant_genes.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
+```
+
+>Q: What pathway has the most significant “Entities p-value”? Do the most significant pathways listed match your previous KEGG results? What factors could cause differences between the two methods?
+
+The pathway with the most significant p-value is Endosomal/Vacuolar pathway. P value was 1.67E-4. Some of the  most significant pathways do match our previous KEGG results. Factors that caused these differences include different data bases.
+
+
+
+
+
